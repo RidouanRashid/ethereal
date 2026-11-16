@@ -1,6 +1,6 @@
 # Ethereal
 
-Een website zonder tekst, knoppen of menu's: alleen scrollen. Terwijl je scrolt reis je
+Een website zonder tekst, knoppen of menu's: alleen scrollen en klikken. Terwijl je scrolt reis je
 door 21 abstracte, psychedelische visioenen die live door je videokaart worden getekend.
 Ze knippen door elkaar, laten regenboogsporen achter en vallen uiteen in glitches. Hoe
 harder je scrolt, hoe meer chaos.
@@ -18,10 +18,25 @@ harder je scrolt, hoe meer chaos.
   knipperende ogen, een DNA-helix, een vliegende schotel en een gespiegelde tempel.
 - **Reizen in plaats van bladeren.** Bij elke overgang schiet het oude visioen op je af en
   opent het nieuwe zich vanuit het midden.
-- **De duik.** Elke 11 seconden word je een eindeloze tunnel van het huidige visioen in
-  gezogen, terwijl het beeld schudt, uitrekt en in scherven uit elkaar wordt getrokken.
-- **Lagen van chaos.** Split-screens die naar andere visioenen springen, spiegelingen,
+- **De duik.** Elke 60 tot 90 seconden, op een onverwacht moment, word je acht seconden
+  lang een eindeloze tunnel van het huidige visioen in gezogen. De snelheid loopt vloeiend
+  op in drie trappen: snel, supersnel, supersonisch. Daarna rem je af en veert het beeld
+  terug.
+- **De engel.** Aan het eind van elke duik wacht een engel uit het boek Ezechiël, en je
+  weet nooit welke: wielen in wielen vol knipperende ogen, of een ring met ogen gedragen
+  door zes vleugels. Hij groeit uit het punt waar je naartoe werd gezogen, kijkt je aan en
+  lost weer op.
+- **Lagen van chaos.** Split-screens die in wisselend tempo naar andere visioenen springen
+  (van traag tot razend), spiegelingen,
   regenbooglinten, een regen van verzonnen schrifttekens en resten van software-schermen.
+- **Sla erop.** Klik of tik ergens en er loopt een schokgolf vanaf dat punt door het
+  beeld: het breekt in scherven, en in de scheuren zie je even een ander visioen. Houd
+  ingedrukt om op te laden (het beeld wordt naar je vinger gezogen) en laat los voor een
+  grotere klap. Werkt ook op een telefoon; scrollen blijft daar gewoon scrollen.
+- **De kruiper.** Elke 30 seconden kruipt er een pikzwarte figuur op handen en knieën
+  door het beeld, tien tot twaalf seconden lang. Alleen zijn ogen lichten op. Hij sluipt,
+  staat stil, sprint, en draait zijn hoofd als een uil helemaal om. Zijn ogen volgen je
+  cursor, en van een klap vlakbij schrikt hij.
 - **Kleur door het hele spectrum.** Elk visioen draait door het volledige kleurenwiel.
 
 Alles is procedureel: er zit geen enkele afbeelding of video in. Elk beeld is wiskunde in
@@ -60,6 +75,8 @@ git
 - **Vijf tekenstappen per frame:** het visioen van je scrollpositie, mozaïekvakken met
   andere visioenen, een overlay, samenvoegen met de echo van het vorige frame, en als
   laatste de glitch-nabewerking.
+- **Klappen in de nabewerking.** Een klik wordt een ring en een scherfpatroon in de
+  laatste tekenstap, zodat hij over alles heen werkt. Tot vier klappen lopen tegelijk.
 - **Eén chaoswaarde.** Alle effecten luisteren naar één getal dat oploopt met je
   scrollsnelheid.
 
@@ -81,7 +98,8 @@ De hele site is ongeveer 80 kB (gzip).
 ethereal/
 ├── index.html            Canvas en scrollruimte
 ├── src/
-│   ├── main.js           Scroll, scrollsnelheid en de render-lus
+│   ├── main.js           Scroll, klikken/tikken en de render-lus
+│   ├── crawler.js        Wanneer en hoe de kruiper beweegt
 │   ├── style.css
 │   └── gl/               Hier zit bijna alle code
 │       ├── stage.js           Renderer, volgorde van visioenen, mozaïek, tekenstappen
@@ -90,7 +108,8 @@ ethereal/
 │       ├── common.glsl        Gedeelde functies (ruis, palet, chroom, oog)
 │       ├── composite.glsl     Echo en snelheidsstrepen
 │       ├── post.glsl          Glitch-nabewerking
-│       └── overlay-*.glsl     Tekenregen en regenbooglinten
+│       ├── overlay-*.glsl     Tekenregen, regenbooglinten, de kruiper en de engelen
+│       └── angel-common.glsl  Gedeeld door de twee engelen
 ├── vite.config.js
 └── .htaccess             Doorsturen naar dist/ op Apache
 ```
@@ -103,6 +122,13 @@ ethereal/
    `src/gl/stage.js`.
 
 De scrollhoogte, het mozaïek en de overgangen passen zich vanzelf aan.
+
+## Testen
+
+De duik en de engel komen op wisselende momenten. Om ze direct te zien kun je ze
+vastzetten in de adresbalk: `?dive=5` start de eerste duik na 5 seconden, en `&angel=0`
+(wielen) of `&angel=1` (vleugels) kiest de engel. Bijvoorbeeld
+`http://localhost:5173/?dive=5&angel=1`.
 
 ## Browsers
 

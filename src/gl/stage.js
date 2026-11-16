@@ -6,6 +6,11 @@ import glyphsMain from './overlay-glyphs.glsl?raw';
 import ribbonsMain from './overlay-ribbons.glsl?raw';
 import compositeMain from './composite.glsl?raw';
 import postFragment from './post.glsl?raw';
+import crawlerMain from './overlay-crawler.glsl?raw';
+import angelCommon from './angel-common.glsl?raw';
+import angelWheels from './overlay-angel-wheels.glsl?raw';
+import angelWings from './overlay-angel-wings.glsl?raw';
+import { createCrawler } from '../crawler.js';
 
 // Volgorde van de visioenen tijdens het scrollen: [kop in scenes.glsl, functienaam].
 const ORDER = [
@@ -69,9 +74,28 @@ const smooth = (a, b, x) => {
   return k * k * (3 - 2 * k);
 };
 
-// De duik: om de hoeveel seconden, en welk deel daarvan de duik duurt.
-const DIVE_EVERY = 11;
-const DIVE_PART = 0.14;
+// De duik komt op wisselende momenten: tussen twee duiken zit 60 tot 90 seconden,
+// de eerste komt na 30 tot 60 seconden. Hij duurt DIVE_TIME seconden.
+const DIVE_GAP = [60, 90];
+const DIVE_FIRST = [30, 60];
+const DIVE_TIME = 8;
+// De drie trappen: snel -> supersnel -> supersonisch.
+// from = moment in de duik (0..1) waarop de trap begint, level = hevigheid,
+// speed = hoe snel je door de tunnel gaat.
+const DIVE_STAGES = [
+  { from: 0, level: 0.4, speed: 1.6 },
+  { from: 0.3, level: 0.7, speed: 5 },
+  { from: 0.62, level: 1, speed: 14 },
+];
+const DIVE_BLEND = 0.14;  // hoe breed de overgang tussen twee trappen is (deel van de duik)
+const LANDING_TIME = 2.6; // seconden afremmen na een duik
+
+// De engel: verschijnt vlak voor het einde van de duik en blijft daarna nog even.
+const ANGEL_LEAD = 1.8; // seconden vóór het einde van de duik
+const ANGEL_STAY = 4.5; // seconden na het einde
+
+// Het mozaïek wisselt van tempo: indelingen per seconde, van traag tot razend.
+const MOSAIC_TEMPOS = [0.25, 0.4, 0.8, 1.4, 2.5, 4.5, 7];
 
 // Indelingen van het mozaïek: [kolommen, rijen, kans dat deze gekozen wordt].
 const GRIDS = [
@@ -129,8 +153,12 @@ export function createStage(canvas, { reduce = false } = {}) {
     uMouse: { value: [0, 0] },
     uChaos: { value: 0 },
     uVoid: { value: 0 },
+    uDiveZ: { value: 0 },
+    uDiveGate: { value: 0 },
     uSpeed: { value: 0 },
     uFlash: { value: 0 },
+    uBounce: { value: 0 },
+    uCalm: { value: 0 },
   };
   // Deze waarden verschillen per tekenstap en worden vlak voor elke stap gezet.
   const draw = {
@@ -150,7 +178,17 @@ export function createStage(canvas, { reduce = false } = {}) {
     uPrev: { value: null },
     uFeedback: { value: reduce ? 0 : 1 },
   };
-  const postUniforms = { ...shared, uTex: { value: null } };
+  const postUniforms = {
+    ...shared,
+    uTex: { value: null },
+    uBehind: { value: null },
+    uBehindOn: { value: 0 },
+    uShock0: { value: [0, 0, 0, 0] },
+    uShock1: { value: [0, 0, 0, 0] },
+    uShock2: { value: [0, 0, 0, 0] },
+    uShock3: { value: [0, 0, 0, 0] },
+    uCharge: { value: [0, 0, 0] },
+  };
 
   /** Maakt een shader + mesh. Geeft null terug als de videokaart hem weigert. */
   function makeMesh(fragment, uniforms, label) {
@@ -197,7 +235,19 @@ export function createStage(canvas, { reduce = false } = {}) {
       if (sceneMeshes[i] || failed[i]) continue;
       if (best < 0 || Math.abs(i - focus) < Math.abs(best - focus)) best = i;
     }
-    if (best < 0) return; // alles klaar
+    if (best < 0) {
+      // alle visioenen zijn klaar: nu alvast de kruiper en de engelen, zodat er geen
+      // hapering is op het moment dat ze voor het eerst verschijnen
+      if (crawlerMesh === undefined) {
+        crawlerMesh = makeMesh(`${common}\n${crawlerMain}`, crawlUniforms, 'kruiper');
+      } else {
+        const todo = angelMeshes.indexOf(undefined);
+        if (todo < 0) return; // echt alles klaar
+        angelMeshes[todo] = makeMesh(`${common}\n${angelCommon}\n${angelSources[todo]}`, angelUniforms, 'engel');
+      }
+      setTimeout(compileNext, 60);
+      return;
+    }
     compileScene(best);
     setTimeout(compileNext, 60);
   }
@@ -208,6 +258,16 @@ export function createStage(canvas, { reduce = false } = {}) {
   // Overlays worden pas gemaakt als ze voor het eerst nodig zijn.
   let glyphMesh;
   let ribbonMesh;
+
+  // De kruiper: de logica zit in crawler.js, hier alleen het tekenen.
+  const crawler = createCrawler();
+  const crawlUniforms = {
+    ...shared,
+    uCrawl: { value: [0, 0, 1, 1] },
+    uCrawlPose: { value: [0, 0, 1, 1] },
+    uCrawlLook: { value: [0, 0] },
+  };
+  let crawlerMesh;
 
   /** Het dichtstbijzijnde visioen dat al klaar is (of -1). */
   function nearestReady(index) {
@@ -220,6 +280,7 @@ export function createStage(canvas, { reduce = false } = {}) {
 
   // ---------- buffers ----------
   let sceneTarget = null;
+  let behindTarget = null; // het visioen dat je in de scheuren van een klap ziet
   let feedback = [];
   function disposeTarget(target) {
     if (!target) return;
@@ -227,14 +288,25 @@ export function createStage(canvas, { reduce = false } = {}) {
     if (target.texture && target.texture.texture) gl.deleteTexture(target.texture.texture);
   }
   function makeTargets() {
-    [sceneTarget, ...feedback].forEach(disposeTarget);
+    [sceneTarget, behindTarget, ...feedback].forEach(disposeTarget);
     const options = { width: gl.canvas.width, height: gl.canvas.height, depth: false };
     sceneTarget = new RenderTarget(gl, options);
+    behindTarget = new RenderTarget(gl, options);
     feedback = [new RenderTarget(gl, options), new RenderTarget(gl, options)];
   }
 
+  let lastWidth = -1;
+  let lastHeight = -1;
   function resize() {
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    // Op een telefoon verandert de hoogte steeds een beetje doordat de adresbalk in- en
+    // uitschuift. Dan alle buffers opnieuw maken geeft haperingen (en wist de echo),
+    // dus kleine hoogteverschillen bij gelijke breedte slaan we over.
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    if (width === lastWidth && Math.abs(height - lastHeight) < 160) return;
+    lastWidth = width;
+    lastHeight = height;
+    renderer.setSize(width, height);
     shared.uRes.value = [gl.canvas.width, gl.canvas.height];
     makeTargets();
   }
@@ -272,11 +344,42 @@ export function createStage(canvas, { reduce = false } = {}) {
     draw.uDissolve.value = options.dissolve || 0;
     draw.uGain.value = options.gain === undefined ? 1 : options.gain;
     setBlend(mesh.program, options.blend || 'none');
-    renderer.render({ scene: mesh, target: sceneTarget, clear: !!options.clear });
+    renderer.render({ scene: mesh, target: options.target || sceneTarget, clear: !!options.clear });
   }
 
   // ---------- mozaïek en overlays: per "cut" opnieuw gekozen ----------
   let lastCut = -1;
+  let mosaicClock = 0;   // loopt sneller of trager, afhankelijk van het tempo
+  let mosaicTempo = 1.4;
+  let mosaicTarget = 1.4;
+  let tempoUntil = 0;    // tot wanneer het huidige tempo geldt
+
+  // toestand van de duik
+  // Om te testen kun je de eerste duik en de engel vastzetten in de adresbalk,
+  // bijvoorbeeld ?dive=5&angel=1 (duik na 5 seconden, engel 0 = wielen, 1 = vleugels).
+  const params = new URLSearchParams(window.location.search);
+  const forcedAngel = params.has('angel') ? Number(params.get('angel')) % 2 : -1;
+  let diveStart = params.has('dive')
+    ? Number(params.get('dive'))
+    : DIVE_FIRST[0] + Math.random() * (DIVE_FIRST[1] - DIVE_FIRST[0]);
+  let diveEndsAt = -100; // einde van de lopende of laatste duik
+  let wasDiving = false;
+  let landSpeed = 0;
+  let landLevel = 0;
+  canvas.dataset.nextDive = diveStart.toFixed(1); // handig bij het testen: seconde waarop de duik begint
+
+  // de engel aan het eind van de duik
+  const angelUniforms = { ...shared, uAngel: { value: [0, 0, 0, 0] } };
+  const angelSources = [angelWheels, angelWings];
+  const angelMeshes = [undefined, undefined];
+  let angelKind = 0;
+  let angelSeed = 0;
+  let diveZ = 0;
+  let diveLevel = 0;
+  let diveSpeed = 0;
+  let diveStage = -1;
+  let diveKick = -100;   // moment van de laatste "schakelklap" of aankomst
+  let landedAt = -100;   // moment waarop de laatste duik eindigde
   let layout = { mirror: 0, cells: [] };
   function makeLayout(cut, chaos) {
     const rnd = randomFrom(cut + 1);
@@ -312,6 +415,25 @@ export function createStage(canvas, { reduce = false } = {}) {
     return { mirror: m < 0.3 * chaos ? 1 : m < 0.5 * chaos ? 2 : 0, cells };
   }
 
+  // ---------- klappen (klik/tik) en opladen (vasthouden) ----------
+  const SHOCK_LIFE = 1.3; // seconden dat een klap zichtbaar is
+  const shockSlots = [postUniforms.uShock0, postUniforms.uShock1, postUniforms.uShock2, postUniforms.uShock3];
+  let shocks = []; // { x, y, start, power }
+  const HIT_STOP = 0.09; // seconden dat het beeld bevriest bij een klap
+  let freezeUntil = 0;
+  let timeLag = 0;       // hoeveel de visioenen achterlopen door die bevriezingen
+  let lastTime = 0;
+  let layoutBump = 0;    // elke klap gooit de indeling van het mozaïek om
+  let behindScene = 0;
+  const seconds = () => performance.now() / 1000;
+
+  /** Schermpositie in pixels -> de ruimte waarin de shader rekent (midden = 0,0). */
+  function toShaderSpace(clientX, clientY) {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return [(clientX / w - 0.5) * (w / h), 0.5 - clientY / h];
+  }
+
   let lastOverlayTick = -1;
   let overlay = 'none';
   function pickOverlay(tick, chaos) {
@@ -330,23 +452,105 @@ export function createStage(canvas, { reduce = false } = {}) {
      * @param {number} velocity  0..1: hoe hard er gescrold wordt
      */
     render(time, scene, chaos, velocity = 0) {
-      if (lost || document.hidden) return;
+      if (lost || document.hidden || !sceneTarget) return;
 
       mouse[0] += (target[0] - mouse[0]) * 0.05;
       mouse[1] += (target[1] - mouse[1]) * 0.05;
       shared.uMouse.value = [mouse[0], mouse[1]];
 
+      // Hit-stop: tijdens de aanloop van een klap staat de tijd van de visioenen stil.
+      const frame = Math.min(Math.max(time - lastTime, 0), 0.1);
+      lastTime = time;
+      if (seconds() < freezeUntil) timeLag += frame;
+
       // Bij "minder beweging" staat de tijd stil en is er geen chaos.
-      const now = reduce ? 12 : time;
-      // De duik: elke 11 seconden schiet je ruim anderhalve seconde lang met oplopende
-      // snelheid het visioen in. dive loopt van 0 naar 1; daarna volgt de aankomst.
-      const phase = (now / DIVE_EVERY) % 1;
-      const dive = reduce ? 0 : Math.max(0, (phase - (1 - DIVE_PART)) / DIVE_PART);
-      const flash = reduce || now < DIVE_EVERY ? 0 : Math.exp(-phase * DIVE_EVERY * 5);
-      const ch = reduce ? 0 : chaos;
+      const now = reduce ? 12 : time - timeLag;
+      // De duik: op een wisselend moment word je acht seconden een eindeloze tunnel in
+      // gezogen. Dat gaat in drie trappen (snel, supersnel, supersonisch), die vloeiend
+      // in elkaar overlopen. Aan het eind wacht een engel.
+      const diveT = reduce ? -1 : (now - diveStart) / DIVE_TIME; // 0..1 tijdens de duik
+      const diving = diveT >= 0 && diveT < 1;
+      let gate = 0;
+      let bounce = 0;
+      let flash = 0;
+      if (diving) {
+        if (!wasDiving) {
+          wasDiving = true;
+          diveZ = 0;
+          diveEndsAt = diveStart + DIVE_TIME;
+          // welke engel er komt, is elke keer een gok
+          angelKind = forcedAngel >= 0 ? forcedAngel : Math.random() < 0.5 ? 0 : 1;
+          angelSeed = Math.random() * 10;
+        }
+        // Hevigheid en snelheid lopen van trap naar trap via een vloeiende curve in
+        // plaats van een sprong. "shift" is een zachte bult midden in elke overgang:
+        // daar voel je het opschakelen.
+        let level = DIVE_STAGES[0].level;
+        let speed = DIVE_STAGES[0].speed;
+        let shift = 0;
+        for (let i = 1; i < DIVE_STAGES.length; i++) {
+          const at = DIVE_STAGES[i].from;
+          const k = smooth(at - DIVE_BLEND / 2, at + DIVE_BLEND / 2, diveT);
+          level += (DIVE_STAGES[i].level - DIVE_STAGES[i - 1].level) * k;
+          speed += (DIVE_STAGES[i].speed - DIVE_STAGES[i - 1].speed) * k;
+          shift += 4 * k * (1 - k);
+        }
+        const ease = smooth(0, 0.14, diveT); // rustig op gang komen
+        diveLevel = level * ease;
+        diveSpeed = speed * (1 + 0.3 * diveT) * ease;
+        diveZ += diveSpeed * frame;
+        gate = smooth(0, 1.2, diveT * DIVE_TIME); // de tunnel komt er in ruim een seconde in
+        bounce = 0.2 * shift;
+        flash = 0.35 * shift;
+      } else {
+        if (wasDiving) {
+          wasDiving = false; // de duik is voorbij: afremmen
+          landedAt = now;
+          landSpeed = diveSpeed;
+          landLevel = diveLevel;
+          // de volgende duik komt 60 tot 90 seconden na het begin van deze
+          diveStart += DIVE_GAP[0] + Math.random() * (DIVE_GAP[1] - DIVE_GAP[0]);
+          canvas.dataset.nextDive = diveStart.toFixed(1);
+        }
+        const since = now - landedAt;
+        if (!reduce && since < LANDING_TIME + 3) {
+          // Afremmen: de snelheid loopt uit in plaats van te stoppen, de tunnel lost
+          // geleidelijk op, en het beeld veert één keer ruim door en komt dan tot rust.
+          diveSpeed = landSpeed * Math.exp(-since * 2.4);
+          diveZ += diveSpeed * frame;
+          diveLevel = landLevel * (1 - smooth(0, 1.6, since));
+          gate = since < LANDING_TIME ? 1 - smooth(0.15, LANDING_TIME - 0.6, since) : 0;
+          // de vering begint op nul (sinus), dus zonder schok
+          bounce = 0.9 * Math.exp(-since * 2) * Math.sin(since * 5.2);
+          flash = 0.6 * smooth(0, 0.2, since) * Math.exp(-since * 3.5);
+        } else {
+          diveLevel = 0;
+          diveSpeed = 0;
+        }
+      }
+      const dive = diveLevel;
+
+      // de engel: groeit uit het punt waar je naartoe werd gezogen, blijft even hangen,
+      // en lost dan op terwijl hij verder op je af komt
+      const angelT = now - (diveEndsAt - ANGEL_LEAD);
+      const angelLife = ANGEL_LEAD + ANGEL_STAY;
+      const angelOn = !reduce && angelT >= 0 && angelT < angelLife;
+      if (angelOn) {
+        const fade = smooth(angelLife - 1.5, angelLife, angelT);
+        const grow = smooth(0, ANGEL_LEAD + 0.8, angelT) * (1 + 0.5 * fade);
+        angelUniforms.uAngel.value = [grow, smooth(0, 1, angelT) * (1 - fade), angelSeed, 0];
+      }
+      // een klap geeft ook even extra chaos (meer glitch en echo), die snel wegzakt
+      const energy = shocks.reduce((sum, shock) => sum + shock.power * Math.exp(-(seconds() - shock.start) * 2.2), 0);
+      // tijdens de duik juist minder chaos: dan blijft zichtbaar waar je in duikt
+      const ch = reduce ? 0 : (chaos + 0.35 * Math.min(energy, 1.5)) * (1 - 0.6 * gate);
       shared.uTime.value = now;
       shared.uChaos.value = ch;
       shared.uVoid.value = dive;
+      shared.uBounce.value = bounce;
+      shared.uCalm.value = gate;
+      shared.uDiveZ.value = diveZ;
+      shared.uDiveGate.value = gate;
       shared.uFlash.value = flash;
 
       const width = gl.canvas.width;
@@ -361,9 +565,16 @@ export function createStage(canvas, { reduce = false } = {}) {
       // Snelheid: het hoogst halverwege een overgang (meer als je hard scrolt) en
       // tegen het einde van een duik.
       const travel = Math.sin(k * Math.PI) * (0.6 + 0.8 * velocity);
-      shared.uSpeed.value = reduce ? 0 : Math.min(1.5, Math.max(travel, dive * dive * 1.3));
+      shared.uSpeed.value = reduce ? 0 : Math.min(1.5, Math.max(travel, dive * 1.5 * gate));
 
-      const cut = Math.floor(now * 1.4);
+      // Het tempo van het mozaïek wisselt elke paar seconden tussen traag en razend.
+      if (now >= tempoUntil) {
+        mosaicTarget = MOSAIC_TEMPOS[Math.floor(Math.random() * MOSAIC_TEMPOS.length)];
+        tempoUntil = now + 2 + Math.random() * 5;
+      }
+      mosaicTempo += (mosaicTarget - mosaicTempo) * Math.min(1, frame * 2);
+      mosaicClock += mosaicTempo * frame;
+      const cut = Math.floor(mosaicClock) + layoutBump * 1000;
       if (cut !== lastCut) {
         lastCut = cut;
         layout = makeLayout(cut, ch);
@@ -385,7 +596,7 @@ export function createStage(canvas, { reduce = false } = {}) {
       }
 
       // 2. mozaïekvakken, elk beperkt tot zijn eigen rechthoek
-      if (dive < 0.05 && layout.cells.length) { // tijdens een duik geen vakken: dan leest de vaart beter
+      if (gate < 0.05 && layout.cells.length) { // tijdens een duik geen vakken: dan leest de vaart beter
         gl.enable(gl.SCISSOR_TEST);
         for (const cell of layout.cells) {
           const index = nearestReady(cell.scene);
@@ -424,17 +635,92 @@ export function createStage(canvas, { reduce = false } = {}) {
         }
       }
 
+      // klappen: leeftijd bijwerken, uitgedoofde klappen weggooien
+      const clock = seconds();
+      shocks = shocks.filter((shock) => clock - shock.start < SHOCK_LIFE);
+      shockSlots.forEach((slot, i) => {
+        const shock = shocks[i];
+        slot.value = shock ? [shock.x, shock.y, clock - shock.start, shock.power] : [0, 0, 0, 0];
+      });
+      // het visioen achter de scheuren wordt alleen getekend zolang er een klap loopt
+      if (shocks.length) {
+        const behind = nearestReady(behindScene);
+        drawScene(behind, { rect: full, hue: hueOf(behind) + 3, target: behindTarget, clear: true });
+        postUniforms.uBehindOn.value = 1;
+      } else {
+        postUniforms.uBehindOn.value = 0;
+      }
+      // altijd een geldige texture meegeven, ook als er geen klap loopt
+      postUniforms.uBehind.value = behindTarget.texture;
+
       // 4. samenvoegen met de echo van het vorige frame ("ping-pong" tussen twee buffers)
       const [read, write] = feedback;
       compositeUniforms.uSceneTex.value = sceneTarget.texture;
       compositeUniforms.uPrev.value = read.texture;
       renderer.render({ scene: compositeMesh, target: write });
 
+      // de kruiper komt óver de echo heen, anders vult de echo zijn zwarte lijf op
+      const crawl = reduce ? null : crawler.update(now, frame, width / height);
+      if (crawl) {
+        if (crawlerMesh === undefined) crawlerMesh = makeMesh(`${common}\n${crawlerMain}`, crawlUniforms, 'kruiper');
+        if (crawlerMesh) {
+          // zijn ogen volgen de cursor of vinger
+          const lookX = (target[0] * width) / height / 2 - crawl.x;
+          const lookY = target[1] / 2 - crawl.y;
+          const lookLength = Math.hypot(lookX, lookY) || 1;
+          crawlUniforms.uCrawl.value = [crawl.x, crawl.y, crawl.scale, crawl.dir];
+          crawlUniforms.uCrawlPose.value = [crawl.phase, crawl.head, crawl.flip, 1];
+          crawlUniforms.uCrawlLook.value = [(lookX / lookLength) * crawl.dir, (lookY / lookLength) * crawl.flip];
+          setBlend(crawlerMesh.program, 'alpha');
+          renderer.render({ scene: crawlerMesh, target: write, clear: false });
+        }
+      }
+
+      if (angelOn) {
+        if (angelMeshes[angelKind] === undefined) {
+          angelMeshes[angelKind] = makeMesh(
+            `${common}\n${angelCommon}\n${angelSources[angelKind]}`, angelUniforms, 'engel');
+        }
+        const angel = angelMeshes[angelKind];
+        if (angel) {
+          setBlend(angel.program, 'alpha');
+          renderer.render({ scene: angel, target: write, clear: false });
+        }
+      }
+
       // 5. glitch-nabewerking naar het scherm
       postUniforms.uTex.value = write.texture;
       renderer.render({ scene: postMesh });
 
       feedback.reverse();
+    },
+
+    /**
+     * Een klap op een plek op het scherm (klik of tik).
+     * @param {number} clientX  pixels vanaf links
+     * @param {number} clientY  pixels vanaf boven
+     * @param {number} power    1 = gewone klik, tot ~2,5 na volledig opladen
+     */
+    shock(clientX, clientY, power = 1) {
+      if (reduce || lost) return;
+      const [x, y] = toShaderSpace(clientX, clientY);
+      shocks.push({ x, y, start: seconds(), power });
+      freezeUntil = seconds() + HIT_STOP;
+      layoutBump += 1;
+      crawler.startle(x, y);
+      if (shocks.length > shockSlots.length) shocks.shift(); // maximaal vier tegelijk
+      // kies een ander visioen om in de scheuren te laten zien
+      behindScene = (focus + 1 + Math.floor(Math.random() * (SCENE_COUNT - 1))) % SCENE_COUNT;
+    },
+
+    /**
+     * Opladen terwijl de muisknop of vinger wordt vastgehouden.
+     * @param {number} amount  0 = uit, 1 = volledig opgeladen
+     */
+    charge(clientX, clientY, amount) {
+      if (reduce || lost) return;
+      const [x, y] = toShaderSpace(clientX, clientY);
+      postUniforms.uCharge.value = [x, y, amount];
     },
   };
 }

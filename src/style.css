@@ -13,6 +13,18 @@
   box-sizing: border-box;
 }
 
+/* De hele pagina is één aanraakvlak: geen tekstselectie, tikflits of menu bij lang
+   drukken, en alleen verticaal scrollen (dus geen dubbeltik-zoom). */
+html {
+  cursor: crosshair;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: pan-y;
+  overscroll-behavior: none;
+}
+
 html,
 body {
   margin: 0;

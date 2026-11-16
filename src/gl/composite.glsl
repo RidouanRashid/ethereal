@@ -4,6 +4,7 @@ uniform sampler2D uPrev;     // het vorige eindbeeld
 uniform float uFeedback;     // 0 = geen echo
 uniform float uChaos;
 uniform float uSpeed;      // 0..1,5: hoe hard je "reist"
+uniform float uCalm;       // 1 tijdens de duik: minder smeren, zodat het visioen leesbaar blijft
 
 void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
@@ -44,7 +45,7 @@ void main() {
   prev = max(mix(vec3(pl), prev, 1.35), 0.0);
   float dark = 1.0 - smoothstep(0.15, 0.6, dot(col, LUMA));
   float keep = mix(0.87, 0.95, sp);                       // strepen blijven langer hangen
-  float weight = mix(0.35 + 0.65 * dark, 1.0, sp * 0.6);  // en mogen ook over lichte delen
+  float weight = mix(0.35 + 0.65 * dark, 1.0, sp * (0.6 - 0.4 * uCalm));  // en mogen ook over lichte delen
   col = max(col, (prev * keep - 0.012) * uFeedback * weight);
 
   gl_FragColor = vec4(col, 1.0);

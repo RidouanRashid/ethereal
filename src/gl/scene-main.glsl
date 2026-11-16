@@ -11,9 +11,12 @@ uniform float uWarpK;      // 0..1: voortgang van de overgang naar het volgende 
 uniform float uDissolve;   // 1 = dit is het binnenkomende visioen (alpha = oplos-masker)
 uniform float uGain;       // helderheid
 uniform float uChaos;
-uniform float uVoid;       // 0..1: voortgang van de periodieke duik (elke 11 seconden)
+uniform float uVoid;       // 0..1: hevigheid van de duik (snel 0,4 -> supersnel 0,7 -> supersonisch 1)
+uniform float uDiveZ;      // afgelegde afstand in de tunnel; loopt per trap sneller op
+uniform float uDiveGate;   // 0..1: of de duik bezig is (zacht in, hard uit)
 uniform float uSpeed;      // 0..1,5: hoe hard je "reist"; geeft snelheidsstrepen
-uniform float uFlash;      // 1 -> 0 vlak na aankomst uit een duik
+uniform float uFlash;      // 1 -> 0 vlak na aankomst uit een duik (het midden licht op)
+uniform float uBounce;     // de vering bij schakelen en afremmen; kan ook negatief zijn
 
 void main() {
   vec2 p = (gl_FragCoord.xy - (uRect.xy + 0.5 * uRect.zw)) / min(uRect.z, uRect.w);
@@ -28,10 +31,10 @@ void main() {
     // (logaritmisch, dus elke ring is een even grote kopie), en die ringen schuiven
     // versnellend naar buiten. Je wordt naar binnen gezogen, maar het beeld blijft
     // op dezelfde afstand en raakt nooit "op".
-    if (uVoid > 0.0) {
+    if (uDiveGate > 0.0) {
       float d = uVoid;
       // het beeld schudt steeds harder
-      p += d * d * 0.05 * vec2(sin(uTime * 47.0), cos(uTime * 61.0));
+      p += d * d * 0.025 * vec2(sin(uTime * 47.0), cos(uTime * 61.0));
       float r = length(p) + 0.0001;
       float screenAng = atan(p.y, p.x);
       // aanzuigen: de randen rekken uit en het beeld schroeft de diepte in
@@ -40,22 +43,22 @@ void main() {
       // snelheid wegschieten, waardoor het langs de naden openscheurt
       float sector = (screenAng / TAU + 0.5) * 16.0;
       float shard = hash21(vec2(floor(sector), 3.0)) - 0.5;
-      float tear = smoothstep(0.25, 1.0, d);
-      float z = 13.0 * pow(d, 2.5) * (1.0 + tear * 1.2 * shard); // afgelegde afstand
+      float tear = smoothstep(0.5, 1.0, d); // scherven pas vanaf "supersnel"
+      float z = uDiveZ * (1.0 + tear * 0.2 * shard); // afgelegde afstand
       // log(r) wordt platter gemaakt: de ringen rekken uit naar de rand (spaghettificatie)
-      float u = log(r) * (1.0 - 0.55 * d * d) - z + tear * shard * 0.8;
+      float u = log(r) * (1.0 - 0.55 * d * d) - z + tear * shard * 0.3;
       // driehoeksgolf: opeenvolgende ringen zijn elkaars spiegelbeeld, dus zonder naad
       // Elke ring bevat bijna het hele visioen (van 0,12 tot 0,89 van het beeld),
       // zodat je blijft zien door welk visioen je reist.
       float m = abs(mod(u, 4.0) - 2.0);
       vec2 tunnel = vec2(cos(ang), sin(ang)) * 0.12 * exp(m);
-      p = mix(p, tunnel, smoothstep(0.0, 0.12, d));
-      rib = mix(1.0, 0.75 + 0.25 * sin(m / 2.0 * 3.14159265), smoothstep(0.0, 0.2, d));
+      p = mix(p, tunnel, uDiveGate);
+      rib = mix(1.0, 0.75 + 0.25 * sin(m / 2.0 * 3.14159265), uDiveGate);
       // donkere scheuren op de naden tussen de scherven
       rib *= 1.0 - tear * 0.85 * smoothstep(0.42, 0.5, abs(fract(sector) - 0.5));
     }
-    // bij aankomst is het beeld heel even te groot en veert het terug
-    p *= 1.0 - 0.25 * uFlash;
+    // afremmen: het beeld schiet door, veert terug en komt in een paar slagen tot rust
+    p *= 1.0 - 0.28 * uBounce;
     // snelheidsstrepen: per richting een andere rek, sterker naar de rand
     float streak = noise(normalize(p + 0.0001) * 12.0 + uTime * 9.0);
     p *= 1.0 - uSpeed * 0.3 * streak * smoothstep(0.0, 0.5, length(p));
@@ -122,15 +125,15 @@ void main() {
   // ---- snelheidsstrepen van het visioen zelf: langs stralen vanuit het midden licht
   //      het visioen in pulsen op. Er komt geen losse witte laag overheen; de strepen
   //      hebben dus altijd de kleuren van het visioen waar je doorheen reist.
-  if (uCell < 0.5 && uVoid > 0.0) {
-    float d = uVoid;
+  if (uCell < 0.5 && uDiveGate > 0.0) {
+    float d = uVoid * uDiveGate;
     col *= rib;
     float a = atan(ps.y, ps.x) / TAU * 260.0;
     float h = hash21(vec2(floor(a), 7.0));
     float line = step(0.6, h) * (1.0 - abs(fract(a) - 0.5) * 2.0);
     // elke streep is een reeks pulsen die naar buiten rent, langer bij meer snelheid
-    float pulse = smoothstep(0.35 - 0.3 * d, 1.0, fract(log(rs + 0.001) * 0.9 - uTime * (2.0 + 6.0 * h) * d - h * 10.0));
-    col *= 1.0 + line * pulse * d * d * 4.0 * smoothstep(0.03, 0.25, rs);
+    float pulse = smoothstep(0.35 - 0.3 * d, 1.0, fract(log(rs + 0.001) * 0.9 - uDiveZ * (0.25 + 0.6 * h) - h * 10.0));
+    col *= 1.0 + line * pulse * d * d * 2.2 * smoothstep(0.03, 0.25, rs);
     // het punt waar je naartoe wordt gezogen gloeit in de kleur van het visioen
     col *= 1.0 + d * d * 0.12 / (rs * rs + 0.03);
   }

@@ -182,7 +182,6 @@ export function createStage(canvas, { reduce = false } = {}) {
     ...shared,
     uTex: { value: null },
     uBehind: { value: null },
-    uBehindOn: { value: 0 },
     uShock0: { value: [0, 0, 0, 0] },
     uShock1: { value: [0, 0, 0, 0] },
     uShock2: { value: [0, 0, 0, 0] },
@@ -264,7 +263,7 @@ export function createStage(canvas, { reduce = false } = {}) {
   const crawlUniforms = {
     ...shared,
     uCrawl: { value: [0, 0, 1, 1] },
-    uCrawlPose: { value: [0, 0, 1, 1] },
+    uCrawlPose: { value: [0, 0, 1] },
     uCrawlLook: { value: [0, 0] },
   };
   let crawlerMesh;
@@ -297,13 +296,16 @@ export function createStage(canvas, { reduce = false } = {}) {
 
   let lastWidth = -1;
   let lastHeight = -1;
+  const touchScreen = window.matchMedia('(pointer: coarse)').matches;
   function resize() {
     // Op een telefoon verandert de hoogte steeds een beetje doordat de adresbalk in- en
     // uitschuift. Dan alle buffers opnieuw maken geeft haperingen (en wist de echo),
-    // dus kleine hoogteverschillen bij gelijke breedte slaan we over.
+    // dus daar slaan we kleine hoogteverschillen bij gelijke breedte over. Op een
+    // computer niet: daar zou het beeld anders uitgerekt blijven na het verkleinen.
     const width = window.innerWidth;
     const height = window.innerHeight;
-    if (width === lastWidth && Math.abs(height - lastHeight) < 160) return;
+    if (width === lastWidth && height === lastHeight) return;
+    if (touchScreen && width === lastWidth && Math.abs(height - lastHeight) < 160) return;
     lastWidth = width;
     lastHeight = height;
     renderer.setSize(width, height);
@@ -359,8 +361,9 @@ export function createStage(canvas, { reduce = false } = {}) {
   // bijvoorbeeld ?dive=5&angel=1 (duik na 5 seconden, engel 0 = wielen, 1 = vleugels).
   const params = new URLSearchParams(window.location.search);
   const forcedAngel = params.has('angel') ? Number(params.get('angel')) % 2 : -1;
-  let diveStart = params.has('dive')
-    ? Number(params.get('dive'))
+  const forcedDive = Number(params.get('dive'));
+  let diveStart = params.has('dive') && Number.isFinite(forcedDive)
+    ? forcedDive
     : DIVE_FIRST[0] + Math.random() * (DIVE_FIRST[1] - DIVE_FIRST[0]);
   let diveEndsAt = -100; // einde van de lopende of laatste duik
   let wasDiving = false;
@@ -369,7 +372,7 @@ export function createStage(canvas, { reduce = false } = {}) {
   canvas.dataset.nextDive = diveStart.toFixed(1); // handig bij het testen: seconde waarop de duik begint
 
   // de engel aan het eind van de duik
-  const angelUniforms = { ...shared, uAngel: { value: [0, 0, 0, 0] } };
+  const angelUniforms = { ...shared, uAngel: { value: [0, 0, 0] } };
   const angelSources = [angelWheels, angelWings];
   const angelMeshes = [undefined, undefined];
   let angelKind = 0;
@@ -377,8 +380,6 @@ export function createStage(canvas, { reduce = false } = {}) {
   let diveZ = 0;
   let diveLevel = 0;
   let diveSpeed = 0;
-  let diveStage = -1;
-  let diveKick = -100;   // moment van de laatste "schakelklap" of aankomst
   let landedAt = -100;   // moment waarop de laatste duik eindigde
   let layout = { mirror: 0, cells: [] };
   function makeLayout(cut, chaos) {
@@ -454,13 +455,15 @@ export function createStage(canvas, { reduce = false } = {}) {
     render(time, scene, chaos, velocity = 0) {
       if (lost || document.hidden || !sceneTarget) return;
 
-      mouse[0] += (target[0] - mouse[0]) * 0.05;
-      mouse[1] += (target[1] - mouse[1]) * 0.05;
-      shared.uMouse.value = [mouse[0], mouse[1]];
-
       // Hit-stop: tijdens de aanloop van een klap staat de tijd van de visioenen stil.
       const frame = Math.min(Math.max(time - lastTime, 0), 0.1);
       lastTime = time;
+
+      // het beeld loopt vertraagd achter de cursor aan, even snel bij 60 en 144 Hz
+      const follow = 1 - Math.exp(-frame * 3);
+      mouse[0] += (target[0] - mouse[0]) * follow;
+      mouse[1] += (target[1] - mouse[1]) * follow;
+      shared.uMouse.value = [mouse[0], mouse[1]];
       if (seconds() < freezeUntil) timeLag += frame;
 
       // Bij "minder beweging" staat de tijd stil en is er geen chaos.
@@ -512,6 +515,12 @@ export function createStage(canvas, { reduce = false } = {}) {
           diveStart += DIVE_GAP[0] + Math.random() * (DIVE_GAP[1] - DIVE_GAP[0]);
           canvas.dataset.nextDive = diveStart.toFixed(1);
         }
+        // Was het tabblad op de achtergrond tijdens de hele duik, dan is hij gemist.
+        // Zonder dit zou er daarna nooit meer een duik komen.
+        while (!reduce && now >= diveStart + DIVE_TIME) {
+          diveStart += DIVE_GAP[0] + Math.random() * (DIVE_GAP[1] - DIVE_GAP[0]);
+          canvas.dataset.nextDive = diveStart.toFixed(1);
+        }
         const since = now - landedAt;
         if (!reduce && since < LANDING_TIME + 3) {
           // Afremmen: de snelheid loopt uit in plaats van te stoppen, de tunnel lost
@@ -538,7 +547,7 @@ export function createStage(canvas, { reduce = false } = {}) {
       if (angelOn) {
         const fade = smooth(angelLife - 1.5, angelLife, angelT);
         const grow = smooth(0, ANGEL_LEAD + 0.8, angelT) * (1 + 0.5 * fade);
-        angelUniforms.uAngel.value = [grow, smooth(0, 1, angelT) * (1 - fade), angelSeed, 0];
+        angelUniforms.uAngel.value = [grow, smooth(0, 1, angelT) * (1 - fade), angelSeed];
       }
       // een klap geeft ook even extra chaos (meer glitch en echo), die snel wegzakt
       const energy = shocks.reduce((sum, shock) => sum + shock.power * Math.exp(-(seconds() - shock.start) * 2.2), 0);
@@ -646,11 +655,7 @@ export function createStage(canvas, { reduce = false } = {}) {
       if (shocks.length) {
         const behind = nearestReady(behindScene);
         drawScene(behind, { rect: full, hue: hueOf(behind) + 3, target: behindTarget, clear: true });
-        postUniforms.uBehindOn.value = 1;
-      } else {
-        postUniforms.uBehindOn.value = 0;
       }
-      // altijd een geldige texture meegeven, ook als er geen klap loopt
       postUniforms.uBehind.value = behindTarget.texture;
 
       // 4. samenvoegen met de echo van het vorige frame ("ping-pong" tussen twee buffers)
@@ -669,7 +674,7 @@ export function createStage(canvas, { reduce = false } = {}) {
           const lookY = target[1] / 2 - crawl.y;
           const lookLength = Math.hypot(lookX, lookY) || 1;
           crawlUniforms.uCrawl.value = [crawl.x, crawl.y, crawl.scale, crawl.dir];
-          crawlUniforms.uCrawlPose.value = [crawl.phase, crawl.head, crawl.flip, 1];
+          crawlUniforms.uCrawlPose.value = [crawl.phase, crawl.head, crawl.flip];
           crawlUniforms.uCrawlLook.value = [(lookX / lookLength) * crawl.dir, (lookY / lookLength) * crawl.flip];
           setBlend(crawlerMesh.program, 'alpha');
           renderer.render({ scene: crawlerMesh, target: write, clear: false });

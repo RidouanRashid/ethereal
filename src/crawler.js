@@ -60,7 +60,7 @@ export function createCrawler() {
       const t = now - c.start;
 
       // welk tempo hoort bij dit moment?
-      let target = c.maxSpeed * 1.5; // voorbij de geplande duur: wegwezen
+      let target = c.maxSpeed * 1.3; // voorbij de geplande duur: wegwezen
       let elapsed = 0;
       for (const segment of c.segments) {
         if (t < elapsed + segment.time) {

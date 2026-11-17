@@ -1,5 +1,5 @@
-// Etheral — overlay: regenbooglinten (wordt met alpha over het beeld getekend).
-// Regenbooglinten die door het beeld slingeren. Alpha zegt waar een lint ligt.
+// Etheral — overlay: regenbooglinten die door het beeld slingeren.
+// Wordt met alpha over het beeld getekend; alpha zegt waar een lint ligt.
 vec4 ribbons(vec2 p, float t) {
   vec4 c = vec4(0.0);
   for (int i = 0; i < 3; i++) {

@@ -1,7 +1,7 @@
 // Etheral — gedeeld door de twee engelen aan het eind van de duik.
 // Vrij naar de engelen uit het boek Ezechiël: wielen in wielen vol ogen, en een
 // ring met vleugels. De vormen hier zijn zelf in code getekend.
-uniform vec4 uAngel; // x = groei (0..1), y = zichtbaarheid (0..1), z = willekeurig zaad
+uniform vec3 uAngel; // x = groei (0..1), y = zichtbaarheid (0..1), z = willekeurig zaad
 
 // Eén wiel: een ring die in de ruimte kantelt (tilt) en draait (spin), bezet met ogen.
 // Geeft kleur en dekking terug.

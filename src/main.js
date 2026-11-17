@@ -53,10 +53,11 @@ let velocity = 0;
 
 // Eén gedeelde render-lus voor GSAP, Lenis en WebGL.
 gsap.ticker.add((time) => {
-  // Scrollsnelheid in visioenen per seconde, gedempt zodat de chaos niet schokt.
+  // Scrollsnelheid in visioenen per seconde, gedempt zodat de chaos niet schokt
+  // (even snel gedempt bij 60 en 144 Hz).
   const dt = Math.max(time - lastTime, 1 / 240);
   const raw = Math.min((Math.abs(state.scene - lastScene) / dt) * 1.2, 1);
-  velocity += (raw - velocity) * 0.1;
+  velocity += (raw - velocity) * (1 - Math.exp(-Math.min(dt, 0.1) * 6));
   lastScene = state.scene;
   lastTime = time;
 

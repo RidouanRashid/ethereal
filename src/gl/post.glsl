@@ -4,7 +4,6 @@ precision highp float;
 
 uniform sampler2D uTex;    // het samengestelde beeld
 uniform sampler2D uBehind; // een ander visioen, zichtbaar in de scheuren van een klap
-uniform float uBehindOn;   // 1 zolang er een klap loopt
 uniform vec2 uRes;
 uniform float uTime;
 uniform float uChaos;
@@ -163,10 +162,7 @@ void main() {
   else if (bh > 1.0 - 0.1 * ch) col = col.gbr;
 
   // ---- in de scheuren van een klap zie je een ander visioen
-  if (crack > 0.001) {
-    vec3 behind = uBehindOn > 0.5 ? texture2D(uBehind, screen).rgb * 1.2 : vec3(0.0);
-    col = mix(col, behind, crack);
-  }
+  if (crack > 0.001) col = mix(col, texture2D(uBehind, screen).rgb * 1.2, crack);
   // ring, scherfranden en vonken lichten op in de kleuren van het beeld zelf
   // (geen witte flits over het hele scherm)
   col *= 1.0 + min(split, 1.5) * 0.6 + glow * 1.6;

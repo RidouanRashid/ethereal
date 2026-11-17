@@ -13,7 +13,7 @@ uniform float uGain;       // helderheid
 uniform float uChaos;
 uniform float uVoid;       // 0..1: hevigheid van de duik (snel 0,4 -> supersnel 0,7 -> supersonisch 1)
 uniform float uDiveZ;      // afgelegde afstand in de tunnel; loopt per trap sneller op
-uniform float uDiveGate;   // 0..1: of de duik bezig is (zacht in, hard uit)
+uniform float uDiveGate;   // 0..1: hoe ver de tunnel er is (zacht in, zacht uit)
 uniform float uSpeed;      // 0..1,5: hoe hard je "reist"; geeft snelheidsstrepen
 uniform float uFlash;      // 1 -> 0 vlak na aankomst uit een duik (het midden licht op)
 uniform float uBounce;     // de vering bij schakelen en afremmen; kan ook negatief zijn

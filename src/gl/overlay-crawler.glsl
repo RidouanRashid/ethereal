@@ -1,7 +1,7 @@
 // Etheral — overlay: de kruiper. Een pikzwart silhouet op handen en knieën waarvan
 // alleen de ogen oplichten. Positie, tempo en hoofdhoek komen uit crawler.js.
 uniform vec4 uCrawl;     // x, y (midden van het lichaam), schaal, richting (+1 of -1)
-uniform vec4 uCrawlPose; // fase van de pas, hoofd (0..1), flip (-1 = aan het plafond), alpha
+uniform vec3 uCrawlPose; // fase van de pas, hoofd (0..1), flip (-1 = aan het plafond)
 uniform vec2 uCrawlLook; // waar de ogen naar kijken
 
 const float GROUND = -0.36;
@@ -90,6 +90,6 @@ void main() {
   }
 
   float light = clamp(eyes + glow, 0.0, 1.0);
-  float alpha = max(max(body, aura), light) * uCrawlPose.w;
+  float alpha = max(max(body, aura), light);
   gl_FragColor = vec4(vec3(1.0, 0.96, 0.75) * light, alpha);
 }
